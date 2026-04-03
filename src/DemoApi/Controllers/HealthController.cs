@@ -12,7 +12,7 @@ namespace DemoApi.Controllers
         {
             return Ok(new
             {
-                Status = "Healthy!",
+                Status = "Healthy!!",
                 UtcTime = DateTime.UtcNow
             });
         }

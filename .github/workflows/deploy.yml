@@ -123,6 +123,16 @@ jobs:
               --specification-format OpenApiJson \
               --specification-url "https://${WEBAPP_NAME}.azurewebsites.net/swagger/v1/swagger.json"
 
+      - name: Update APIM backend service URL
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            az apim api update \
+              --resource-group $RESOURCE_GROUP \
+              --service-name $APIM_NAME \
+              --api-id $API_ID \
+              --set serviceUrl="https://${WEBAPP_NAME}.azurewebsites.net"
+
       - name: Apply APIM API policy
         uses: azure/cli@v2
         with:
