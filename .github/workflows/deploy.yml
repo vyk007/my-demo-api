@@ -1,0 +1,135 @@
+name: Deploy API and APIM
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: rg-demo-api-aue
+  LOCATION: australiaeast
+
+  # Must be globally unique
+  WEBAPP_NAME: vysh-demo-api-2026-001
+
+  # App Service Plan name
+  APP_SERVICE_PLAN_NAME: vysh-demo-api-plan-001
+
+  # Must be globally unique
+  APIM_NAME: vysh-demo-apim-2026-001
+
+  # APIM API settings
+  API_ID: demo-api
+  API_PATH: demo
+  API_DISPLAY_NAME: Demo API
+
+  # APIM publisher info
+  PUBLISHER_EMAIL: vyshak.madhusudan@outlook.com
+  PUBLISHER_NAME: Vysh Demo
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Create resource group
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            az group create \
+              --name $RESOURCE_GROUP \
+              --location $LOCATION
+
+      - name: Deploy infrastructure with Bicep
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            az deployment group create \
+              --resource-group $RESOURCE_GROUP \
+              --template-file infra/main.bicep \
+              --parameters \
+                webAppName=$WEBAPP_NAME \
+                appServicePlanName=$APP_SERVICE_PLAN_NAME \
+                apimName=$APIM_NAME \
+                publisherEmail=$PUBLISHER_EMAIL \
+                publisherName="$PUBLISHER_NAME"
+
+      - name: Restore .NET dependencies
+        run: dotnet restore ./src/DemoApi/DemoApi.csproj
+
+      - name: Build .NET API
+        run: dotnet build ./src/DemoApi/DemoApi.csproj --configuration Release --no-restore
+
+      - name: Publish .NET API
+        run: dotnet publish ./src/DemoApi/DemoApi.csproj --configuration Release --no-build --output ./publish
+
+      - name: Deploy API to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.WEBAPP_NAME }}
+          package: ./publish
+
+      - name: Wait for Swagger endpoint
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            SWAGGER_URL="https://${WEBAPP_NAME}.azurewebsites.net/swagger/v1/swagger.json"
+
+            echo "Checking Swagger endpoint: $SWAGGER_URL"
+
+            for i in {1..30}; do
+              STATUS=$(curl -k -s -o /dev/null -w "%{http_code}" "$SWAGGER_URL")
+              if [ "$STATUS" = "200" ]; then
+                echo "Swagger is ready."
+                exit 0
+              fi
+
+              echo "Swagger not ready yet. Attempt $i/30. HTTP status: $STATUS"
+              sleep 15
+            done
+
+            echo "Swagger endpoint was not available in time."
+            exit 1
+
+      - name: Import API into APIM from Swagger
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            az apim api import \
+              --resource-group $RESOURCE_GROUP \
+              --service-name $APIM_NAME \
+              --api-id $API_ID \
+              --path $API_PATH \
+              --display-name "$API_DISPLAY_NAME" \
+              --specification-format OpenApiJson \
+              --specification-url "https://${WEBAPP_NAME}.azurewebsites.net/swagger/v1/swagger.json"
+
+      - name: Apply APIM API policy
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            az deployment group create \
+              --resource-group $RESOURCE_GROUP \
+              --template-file infra/apim-policy.bicep \
+              --parameters \
+                apimName=$APIM_NAME \
+                apiName=$API_ID

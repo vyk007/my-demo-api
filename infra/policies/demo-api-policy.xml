@@ -1,0 +1,18 @@
+<policies>
+  <inbound>
+    <base />
+    <rate-limit calls="10" renewal-period="60" />
+    <set-header name="x-apim-demo" exists-action="override">
+      <value>policy-applied</value>
+    </set-header>
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>
